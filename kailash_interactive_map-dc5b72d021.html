@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>冈仁波齐转山交互式地图</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body { margin: 0; padding: 0; font-family: Arial, sans-serif; background-color: #f0f0f0; }
+        #app { display: flex; flex-direction: column; height: 100vh; }
+        header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 15px 20px; text-align: center; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        header h1 { margin: 0; font-size: 24px; font-weight: bold; }
+        header p { margin: 5px 0 0; font-size: 14px; opacity: 0.9; }
+        .container { flex: 1; display: flex; position: relative; padding: 20px; gap: 20px; }
+        #main-map { flex: 1; background: white; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.1); overflow: hidden; }
+        .sidebar { width: 300px; background: white; border-radius: 12px; padding: 20px; box-shadow: 0 4px 20px rgba(0,0,0,0.1); overflow-y: auto; }
+        .legend { margin-bottom: 20px; }
+        .legend h3 { margin: 0 0 10px; font-size: 16px; color: #333; }
+        .legend-item { display: flex; align-items: center; margin: 8px 0; padding: 8px; background: #f8f9fa; border-radius: 6px; }
+        .legend-color { width: 20px; height: 20px; margin-right: 10px; border-radius: 4px; border: 2px solid #333; }
+        .legend-text { font-size: 13px; color: #555; }
+        .timeline { margin-top: 20px; }
+        .timeline h3 { margin: 0 0 15px; font-size: 16px; color: #333; }
+        .timeline-item { padding: 12px; margin-bottom: 10px; background: #f8f9fa; border-left: 4px solid #667eea; border-radius: 4px; cursor: pointer; transition: all 0.3s; }
+        .timeline-item:hover { background: #e9ecef; transform: translateX(5px); }
+        .timeline-date { font-weight: bold; color: #667eea; font-size: 14px; }
+        .timeline-location { color: #333; font-size: 13px; margin-top: 3px; }
+        .timeline-altitude { color: #666; font-size: 12px; margin-top: 2px; }
+        .controls { position: absolute; top: 40px; right: 40px; z-index: 1000; display: flex; flex-direction: column; gap: 10px; }
+        .control-btn { width: 40px; height: 40px; background: white; border: 2px solid #667eea; border-radius: 8px; color: #667eea; font-size: 20px; cursor: pointer; transition: all 0.3s; display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 8px rgba(0,0,0,0.15); }
+        .control-btn:hover { background: #667eea; color: white; }
+        .tooltip { position: fixed; background: rgba(0,0,0,0.85); color: white; padding: 10px 15px; border-radius: 6px; font-size: 13px; pointer-events: none; z-index: 10000; max-width: 200px; }
+        @media (max-width: 1024px) {
+            .container { flex-direction: column; }
+            .sidebar { width: 100%; max-height: 300px; }
+            .controls { top: 20px; right: 20px; }
+        }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <header>
+            <h1>冈仁波齐转山交互式地图</h1>
+            <p>2026.05.01-05.14 | 支持缩放、拖拽、点击查看详情</p>
+        </header>
+        
+        <div class="container">
+            <div id="main-map"></div>
+            
+            <div class="sidebar">
+                <div class="legend">
+                    <h3>海拔高度图例</h3>
+                    <div class="legend-item">
+                        <div class="legend-color" style="background: #91cc75"></div>
+                        <div class="legend-text">低海拔 < 4000m</div>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color" style="background: #fac858"></div>
+                        <div class="legend-text">中海拔 4000-5000m</div>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color" style="background: #ee6666"></div>
+                        <div class="legend-text">高海拔 > 5000m</div>
+                    </div>
+                </div>
+                
+                <div class="timeline">
+                    <h3>行程时间轴</h3>
+                    <div id="timeline-container"></div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="controls">
+            <button class="control-btn" id="zoom-in" title="放大">+</button>
+            <button class="control-btn" id="zoom-out" title="缩小">-</button>
+            <button class="control-btn" id="reset" title="重置">⟲</button>
+        </div>
+    </div>
+
+    <div id="tooltip" class="tooltip" style="display: none;"></div>
+
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/map/js/china.js"></script>
+    <script>
+        // 行程数据
+        const journeyData = [
+            { name: '拉萨 Lhasa', date: '5.1-4', altitude: 3650, coords: [91.14, 29.65], level: 'low', description: '抵达拉萨，适应海拔，参观布达拉宫、大昭寺等景点' },
+            { name: '江孜 Gyantse', date: '5.5', altitude: 4040, coords: [89.6, 28.91], level: 'medium', description: '途经羊卓雍措，参观江孜古城' },
+            { name: '日喀则 Shigatse', date: '5.5', altitude: 3830, coords: [88.88, 29.27], level: 'low', description: '参观扎什伦布寺，西藏第二大城市' },
+            { name: '萨嘎 Saga', date: '5.6', altitude: 4500, coords: [85.3, 29.38], level: 'medium', description: '进入阿里地区，适应高海拔' },
+            { name: '吉乌寺 Chiu', date: '5.7', altitude: 4587, coords: [82.68, 30.32], level: 'medium', description: '参观玛旁雍错圣湖畔的古寺' },
+            { name: '塔钦 Darchen', date: '5.8', altitude: 4675, coords: [81.3, 30.98], level: 'medium', description: '转山起点，冈仁波齐神山脚下' },
+            { name: '止热寺 Dirirapuk', date: '5.9', altitude: 5210, coords: [81.32, 31.02], level: 'high', description: '转山第一站，直面冈仁波齐北壁' },
+            { name: '卓玛拉 Drölma', date: '5.11', altitude: 5646, coords: [81.35, 31.04], level: 'high', description: '转山最高点，海拔5646米的垭口' },
+            { name: '宗卓普 Zutrupuk', date: '5.11', altitude: 4790, coords: [81.38, 31.0], level: 'medium', description: '转山最后一站，宗卓普寺' },
+            { name: '吉隆 Kyrong', date: '5.13', altitude: 2700, coords: [85.2, 28.9], level: 'low', description: '通过吉隆口岸，海拔下降' },
+            { name: '加德满都 KTM', date: '5.14', altitude: 1350, coords: [85.32, 27.7], level: 'low', description: '抵达尼泊尔首都，行程结束' }
+        ];
+
+        // 初始化地图
+        const chart = echarts.init(document.getElementById('main-map'));
+        
+        const option = {
+            title: { show: false },
+            tooltip: {
+                trigger: 'item',
+                formatter: function(params) {
+                    if (params.data) {
+                        const data = params.data;
+                        return `
+                            <div style="font-weight: bold; margin-bottom: 5px;">${data.name}</div>
+                            <div>日期: ${data.date}</div>
+                            <div>海拔: ${data.altitude}m</div>
+                            ${data.description ? `<div style="margin-top: 5px; font-size: 12px;">${data.description}</div>` : ''}
+                        `;
+                    }
+                    return params.name;
+                },
+                textStyle: { fontSize: 14 }
+            },
+            geo: {
+                map: 'china',
+                roam: true,
+                zoom: 4.5,
+                center: [86.5, 29.2],
+                itemStyle: {
+                    normal: {
+                        areaColor: '#f5f5f5',
+                        borderColor: '#ddd'
+                    },
+                    emphasis: {
+                        areaColor: '#e9ecef'
+                    }
+                },
+                label: {
+                    normal: {
+                        show: false
+                    }
+                }
+            },
+            series: [
+                {
+                    name: '行程路线',
+                    type: 'lines',
+                    coordinateSystem: 'geo',
+                    zlevel: 1,
+                    lineStyle: {
+                        normal: {
+                            color: '#5470c6',
+                            width: 3,
+                            curveness: 0.1,
+                            opacity: 0.7
+                        }
+                    },
+                    data: journeyData.slice(0, -1).map((item, index) => ({
+                        fromName: item.name,
+                        toName: journeyData[index + 1].name,
+                        coords: [item.coords, journeyData[index + 1].coords]
+                    }))
+                },
+                {
+                    name: '低海拔<4000m',
+                    type: 'effectScatter',
+                    coordinateSystem: 'geo',
+                    data: journeyData.filter(d => d.level === 'low').map(d => ({
+                        name: d.name + '\n' + d.date,
+                        value: [...d.coords, d.altitude],
+                        date: d.date,
+                        altitude: d.altitude,
+                        description: d.description,
+                        level: d.level
+                    })),
+                    symbolSize: 15,
+                    showEffectOn: 'render',
+                    rippleEffect: { scale: 4, brushType: 'stroke' },
+                    itemStyle: { color: '#91cc75', borderColor: '#333', borderWidth: 2 },
+                    label: {
+                        normal: {
+                            show: true,
+                            position: 'top',
+                            formatter: '{b}',
+                            fontSize: 11,
+                            color: '#333',
+                            fontWeight: 'normal'
+                        }
+                    }
+                },
+                {
+                    name: '中海拔4000-5000m',
+                    type: 'effectScatter',
+                    coordinateSystem: 'geo',
+                    data: journeyData.filter(d => d.level === 'medium').map(d => ({
+                        name: d.name + '\n' + d.date,
+                        value: [...d.coords, d.altitude],
+                        date: d.date,
+                        altitude: d.altitude,
+                        description: d.description,
+                        level: d.level
+                    })),
+                    symbolSize: 15,
+                    showEffectOn: 'render',
+                    rippleEffect: { scale: 4, brushType: 'stroke' },
+                    itemStyle: { color: '#fac858', borderColor: '#333', borderWidth: 2 },
+                    label: {
+                        normal: {
+                            show: true,
+                            position: 'top',
+                            formatter: '{b}',
+                            fontSize: 11,
+                            color: '#333',
+                            fontWeight: 'normal'
+                        }
+                    }
+                },
+                {
+                    name: '高海拔>5000m',
+                    type: 'effectScatter',
+                    coordinateSystem: 'geo',
+                    data: journeyData.filter(d => d.level === 'high').map(d => ({
+                        name: d.name + '\n' + d.date,
+                        value: [...d.coords, d.altitude],
+                        date: d.date,
+                        altitude: d.altitude,
+                        description: d.description,
+                        level: d.level
+                    })),
+                    symbolSize: 18,
+                    showEffectOn: 'render',
+                    rippleEffect: { scale: 5, brushType: 'stroke' },
+                    itemStyle: { color: '#ee6666', borderColor: '#333', borderWidth: 2 },
+                    label: {
+                        normal: {
+                            show: true,
+                            position: 'top',
+                            formatter: '{b}',
+                            fontSize: 12,
+                            color: '#ee6666',
+                            fontWeight: 'bold'
+                        }
+                    }
+                }
+            ]
+        };
+
+        chart.setOption(option);
+
+        // 生成时间轴
+        const timelineContainer = document.getElementById('timeline-container');
+        journeyData.forEach(item => {
+            const div = document.createElement('div');
+            div.className = 'timeline-item';
+            div.innerHTML = `
+                <div class="timeline-date">${item.date}</div>
+                <div class="timeline-location">${item.name}</div>
+                <div class="timeline-altitude">海拔: ${item.altitude}m</div>
+            `;
+            
+            const levelColors = { low: '#91cc75', medium: '#fac858', high: '#ee6666' };
+            div.style.borderLeftColor = levelColors[item.level];
+            
+            div.addEventListener('click', () => {
+                chart.setOption({
+                    geo: {
+                        center: item.coords,
+                        zoom: 7
+                    }
+                });
+            });
+            
+            timelineContainer.appendChild(div);
+        });
+
+        // 缩放控制
+        let currentZoom = 4.5;
+        document.getElementById('zoom-in').addEventListener('click', () => {
+            currentZoom = Math.min(currentZoom + 1, 15);
+            chart.setOption({ geo: { zoom: currentZoom } });
+        });
+
+        document.getElementById('zoom-out').addEventListener('click', () => {
+            currentZoom = Math.max(currentZoom - 1, 2);
+            chart.setOption({ geo: { zoom: currentZoom } });
+        });
+
+        document.getElementById('reset').addEventListener('click', () => {
+            currentZoom = 4.5;
+            chart.setOption({ geo: { zoom: 4.5, center: [86.5, 29.2] } });
+        });
+
+        // 响应式调整
+        window.addEventListener('resize', () => {
+            chart.resize();
+        });
+
+        // 鼠标悬停效果
+        chart.on('mouseover', { seriesIndex: [1, 2, 3] }, function(params) {
+            const tooltip = document.getElementById('tooltip');
+            if (params.data && params.data.description) {
+                tooltip.innerHTML = `
+                    <strong>${params.data.name}</strong><br>
+                    <small>${params.data.description}</small>
+                `;
+                tooltip.style.display = 'block';
+                tooltip.style.left = params.event.offsetX + 10 + 'px';
+                tooltip.style.top = params.event.offsetY + 10 + 'px';
+            }
+        });
+
+        chart.on('mouseout', { seriesIndex: [1, 2, 3] }, function() {
+            document.getElementById('tooltip').style.display = 'none';
+        });
+    </script>
+</body>
+</html>
